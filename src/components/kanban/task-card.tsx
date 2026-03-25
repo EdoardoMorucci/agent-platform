@@ -55,6 +55,16 @@ export function TaskCard({ task, onDelete }: TaskCardProps) {
             <Badge variant="secondary" className="text-xs bg-zinc-700 text-zinc-300">
               {task.type}
             </Badge>
+            {task.status === "in_progress" && task.executions.some((e) => e.status === "running") && (
+              <Badge className="text-xs bg-yellow-500/20 text-yellow-400 border-yellow-500/30">
+                Running
+              </Badge>
+            )}
+            {task.status === "review" && (
+              <Badge className="text-xs bg-blue-500/20 text-blue-400 border-blue-500/30">
+                Review
+              </Badge>
+            )}
           </div>
         </div>
         <button
