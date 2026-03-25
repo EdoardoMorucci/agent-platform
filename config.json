@@ -1,0 +1,6 @@
+{
+  "aws_profile": "bedrock",
+  "aws_region": "eu-west-1",
+  "default_model": "eu.anthropic.claude-sonnet-4-6",
+  "claude_cli_path": "claude"
+}
