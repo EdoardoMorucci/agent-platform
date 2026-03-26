@@ -51,7 +51,8 @@ export const COLUMNS: { id: TaskStatus; label: string }[] = [
 
 export type AgentModel =
   | "eu.anthropic.claude-opus-4-6-v1"
-  | "eu.anthropic.claude-sonnet-4-6";
+  | "eu.anthropic.claude-sonnet-4-6"
+  | "eu.anthropic.claude-haiku-4-5-20251001";
 
 export interface Agent {
   id: string;
@@ -82,4 +83,5 @@ export interface UpdateAgentInput {
 export const AGENT_MODELS: { id: AgentModel; label: string }[] = [
   { id: "eu.anthropic.claude-opus-4-6-v1", label: "Claude Opus 4.6" },
   { id: "eu.anthropic.claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+  { id: "eu.anthropic.claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
 ];
