@@ -33,6 +33,7 @@ export async function PUT(
     ...(body.status !== undefined && { status: body.status }),
     ...(body.team_override !== undefined && { team_override: body.team_override }),
     ...(body.rerun_mode !== undefined && { rerun_mode: body.rerun_mode }),
+    ...(body.agent_id !== undefined && { agent_id: body.agent_id }),
     updated_at: new Date().toISOString(),
   };
 
