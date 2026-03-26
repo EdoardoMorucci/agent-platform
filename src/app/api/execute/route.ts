@@ -1,7 +1,6 @@
 import { NextRequest } from "next/server";
-import { spawn } from "child_process";
+import AnthropicBedrock from "@anthropic-ai/bedrock-sdk";
 import { v4 as uuidv4 } from "uuid";
-import fs from "fs/promises";
 import {
   readJsonFile,
   writeJsonFile,
@@ -12,7 +11,6 @@ import {
 } from "@/lib/data";
 import type { Task, Agent, TaskExecution, TaskStatus } from "@/lib/types";
 
-
 export async function GET(request: NextRequest) {
   const taskId = request.nextUrl.searchParams.get("task_id");
   if (!taskId) {
@@ -21,16 +19,17 @@ export async function GET(request: NextRequest) {
 
   const encoder = new TextEncoder();
   let controllerClosed = false;
-  let spawnedProc: ReturnType<typeof spawn> | null = null;
   let currentExecId = "";
+  const sdkAbort = new AbortController();
 
   const stream = new ReadableStream({
     async start(controller) {
       function send(event: string, data: object) {
         if (controllerClosed) return;
         try {
-          const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-          controller.enqueue(encoder.encode(payload));
+          controller.enqueue(
+            encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+          );
         } catch {
           controllerClosed = true;
         }
@@ -45,32 +44,15 @@ export async function GET(request: NextRequest) {
 
       // ── Load task ────────────────────────────────────────────────────────
       const task = await readJsonFile<Task>(getTaskPath(taskId));
-      if (!task) {
-        send("error", { message: "Task not found" });
-        close();
-        return;
-      }
-
-      if (!task.agent_id) {
-        send("error", { message: "No agent assigned to this task" });
-        close();
-        return;
-      }
-
-      // Guard against double-invoke (React StrictMode dev or duplicate requests)
+      if (!task) { send("error", { message: "Task not found" }); close(); return; }
+      if (!task.agent_id) { send("error", { message: "No agent assigned" }); close(); return; }
       if (task.executions.some((e) => e.status === "running")) {
-        send("error", { message: "Task is already running" });
-        close();
-        return;
+        send("error", { message: "Task is already running" }); close(); return;
       }
 
       // ── Load agent ───────────────────────────────────────────────────────
       const agent = await readJsonFile<Agent>(getAgentConfigPath(task.agent_id));
-      if (!agent) {
-        send("error", { message: "Agent not found" });
-        close();
-        return;
-      }
+      if (!agent) { send("error", { message: "Agent not found" }); close(); return; }
 
       const claudeMd = await readTextFile(getAgentClaudeMdPath(task.agent_id));
 
@@ -86,130 +68,128 @@ export async function GET(request: NextRequest) {
         feedback: task.pending_feedback ?? null,
       };
 
-      const taskWithExec: Task = {
+      await writeJsonFile(getTaskPath(taskId), {
         ...task,
         status: "in_progress" as TaskStatus,
         executions: [...task.executions, execution],
         pending_feedback: null,
         updated_at: new Date().toISOString(),
-      };
-      await writeJsonFile(getTaskPath(taskId), taskWithExec);
+      });
 
       send("start", { execution_id: execId });
 
-      // ── Prepare working directory ────────────────────────────────────────
-      const workingDir = agent.working_dir || process.cwd();
-      await fs.mkdir(workingDir, { recursive: true });
+      // ── Build messages array ─────────────────────────────────────────────
+      // First turn: always the task itself
+      const messages: AnthropicBedrock.MessageParam[] = [
+        { role: "user", content: `${task.title}\n\n${task.description}` },
+      ];
 
-      // ── Build prompt ─────────────────────────────────────────────────────
-      const systemContext = claudeMd ? `${claudeMd}\n\n---\n\n` : "";
+      // In continue mode, replay the full conversation history
+      if (task.rerun_mode === "continue") {
+        const history = task.executions
+          .filter((e) => e.output.length > 0)
+          .sort((a, b) => a.started_at.localeCompare(b.started_at));
 
-      const lastExec =
-        task.executions.length > 0
-          ? task.executions[task.executions.length - 1]
-          : null;
-
-      let previousContext = "";
-      if (task.rerun_mode === "continue" && lastExec) {
-        previousContext = `\n\n## Previous execution output\n${lastExec.output}`;
-      }
-      if (task.pending_feedback) {
-        previousContext += `\n\n## User Response\n${task.pending_feedback}`;
-      }
-
-      const prompt = `${systemContext}${task.title}\n\n${task.description}${previousContext}`;
-
-      // ── Spawn claude CLI ─────────────────────────────────────────────────
-      const proc = spawnedProc = spawn(
-        "claude",
-        ["-p", prompt, "--model", agent.model, "--output-format", "text"],
-        {
-          env: {
-            ...process.env,
-            AWS_PROFILE: "bedrock",
-            AWS_REGION: "eu-west-1",
-            CLAUDE_CODE_USE_BEDROCK: "1",
-          },
-          cwd: workingDir,
-          windowsHide: true,
+        for (const exec of history) {
+          // User reply that triggered this execution (if any)
+          if (exec.feedback) {
+            messages.push({ role: "user", content: exec.feedback });
+          }
+          messages.push({ role: "assistant", content: exec.output });
         }
-      );
 
-      let outputBuffer = "";
+        // Pending reply to the last execution
+        if (task.pending_feedback) {
+          messages.push({ role: "user", content: task.pending_feedback });
+        }
+      }
 
-      // ── Stream output ────────────────────────────────────────────────────
-      await new Promise<void>((resolve) => {
-        proc.stdout.on("data", (chunk: Buffer) => {
-          const text = chunk.toString();
-          outputBuffer += text;
-          send("output", { text });
-        });
-
-        proc.stderr.on("data", (chunk: Buffer) => {
-          const text = chunk.toString();
-          send("output", { text, stderr: true });
-        });
-
-        proc.on("error", (err) => {
-          send("error", { message: err.message });
-          resolve();
-        });
-
-        proc.on("close", (code) => {
-          const execStatus = code === 0 ? "success" : "error";
-          const newTaskStatus: TaskStatus = "review";
-
-          readJsonFile<Task>(getTaskPath(taskId)).then((latestTask) => {
-            if (!latestTask) return;
-            const execIndex = latestTask.executions.findIndex(
-              (e) => e.id === execId
-            );
-            if (execIndex === -1) return;
-            latestTask.executions[execIndex] = {
-              ...latestTask.executions[execIndex],
-              ended_at: new Date().toISOString(),
-              status: execStatus,
-              output: outputBuffer,
-            };
-            const finalTask: Task = {
-              ...latestTask,
-              status: newTaskStatus,
-              updated_at: new Date().toISOString(),
-            };
-            writeJsonFile(getTaskPath(taskId), finalTask).catch(console.error);
-          });
-
-          send("done", { exit_code: code, status: execStatus, task_status: newTaskStatus });
-          resolve();
-        });
+      // ── Stream via SDK ───────────────────────────────────────────────────
+      const client = new AnthropicBedrock({
+        awsProfile: "bedrock",
+        awsRegion: "eu-west-1",
       });
 
-      close();
-    },
-    cancel() {
-      // Client disconnected — stop streaming and kill the process
-      controllerClosed = true;
-      spawnedProc?.kill();
-      // Mark the running execution as stopped so re-runs are not blocked
-      if (currentExecId) {
-        readJsonFile<Task>(getTaskPath(taskId as string)).then((latestTask) => {
-          if (!latestTask) return;
-          const execIndex = latestTask.executions.findIndex(
-            (e) => e.id === currentExecId && e.status === "running"
-          );
-          if (execIndex === -1) return;
+      let outputBuffer = "";
+      let execStatus: "success" | "error" = "success";
+
+      try {
+        const sdkStream = client.messages.stream(
+          {
+            model: agent.model,
+            max_tokens: 8192,
+            ...(claudeMd ? { system: claudeMd } : {}),
+            messages,
+          },
+          { signal: sdkAbort.signal }
+        );
+
+        for await (const event of sdkStream) {
+          if (controllerClosed) break;
+          if (
+            event.type === "content_block_delta" &&
+            event.delta.type === "text_delta"
+          ) {
+            const text = event.delta.text;
+            outputBuffer += text;
+            send("output", { text });
+          }
+        }
+      } catch (err) {
+        if (!sdkAbort.signal.aborted) {
+          execStatus = "error";
+          const msg = err instanceof Error ? err.message : String(err);
+          send("error", { message: msg });
+        }
+      }
+
+      // ── Persist result ───────────────────────────────────────────────────
+      const latestTask = await readJsonFile<Task>(getTaskPath(taskId));
+      if (latestTask) {
+        const execIndex = latestTask.executions.findIndex((e) => e.id === execId);
+        if (execIndex !== -1) {
           latestTask.executions[execIndex] = {
             ...latestTask.executions[execIndex],
             ended_at: new Date().toISOString(),
-            status: "stopped",
+            status: execStatus,
+            output: outputBuffer,
           };
-          const cleanedTask: Task = {
+          await writeJsonFile(getTaskPath(taskId), {
             ...latestTask,
             status: "in_progress" as TaskStatus,
             updated_at: new Date().toISOString(),
-          };
-          writeJsonFile(getTaskPath(taskId as string), cleanedTask).catch(() => {});
-        }).catch(() => {});
+          });
+        }
+      }
+
+      send("done", { status: execStatus });
+      close();
+    },
+
+    cancel() {
+      controllerClosed = true;
+      sdkAbort.abort();
+      // Mark the running execution as stopped so re-runs are not blocked
+      if (currentExecId) {
+        readJsonFile<Task>(getTaskPath(taskId as string))
+          .then((t) => {
+            if (!t) return;
+            const i = t.executions.findIndex(
+              (e) => e.id === currentExecId && e.status === "running"
+            );
+            if (i === -1) return;
+            t.executions[i] = {
+              ...t.executions[i],
+              ended_at: new Date().toISOString(),
+              status: "stopped",
+            };
+            writeJsonFile(getTaskPath(taskId as string), {
+              ...t,
+              status: "in_progress" as TaskStatus,
+              updated_at: new Date().toISOString(),
+            }).catch(() => {});
+          })
+          .catch(() => {});
       }
     },
   });
