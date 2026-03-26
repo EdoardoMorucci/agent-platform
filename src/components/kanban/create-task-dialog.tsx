@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useTasks } from "@/hooks/use-tasks";
+import { useAgents } from "@/hooks/use-agents";
 import { Plus } from "lucide-react";
 
 const TASK_TYPES = [
@@ -33,10 +34,12 @@ const TASK_TYPES = [
 
 export function CreateTaskDialog() {
   const { createTask } = useTasks();
+  const { agents } = useAgents();
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [type, setType] = useState("general");
+  const [agentId, setAgentId] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -44,10 +47,19 @@ export function CreateTaskDialog() {
     if (!title.trim()) return;
 
     setIsSubmitting(true);
-    await createTask({ title: title.trim(), description, type });
+    const task = await createTask({ title: title.trim(), description, type });
+    // Assign agent if selected
+    if (agentId && task?.id) {
+      await fetch(`/api/tasks/${task.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agent_id: agentId }),
+      });
+    }
     setTitle("");
     setDescription("");
     setType("general");
+    setAgentId("");
     setIsSubmitting(false);
     setOpen(false);
   }
@@ -87,7 +99,7 @@ export function CreateTaskDialog() {
           </div>
           <div className="space-y-2">
             <Label htmlFor="type">Type</Label>
-            <Select value={type} onValueChange={(val) => { if (val) setType(val); }}>
+            <Select value={type} onValueChange={(v) => { if (v) setType(v); }}>
               <SelectTrigger className="bg-zinc-800 border-zinc-700">
                 <SelectValue />
               </SelectTrigger>
@@ -100,12 +112,25 @@ export function CreateTaskDialog() {
               </SelectContent>
             </Select>
           </div>
+          {agents.length > 0 && (
+            <div className="space-y-2">
+              <Label htmlFor="agent">Agent (optional)</Label>
+              <Select value={agentId} onValueChange={(v) => { if (v) setAgentId(v); }}>
+                <SelectTrigger className="bg-zinc-800 border-zinc-700">
+                  <SelectValue placeholder="No agent" />
+                </SelectTrigger>
+                <SelectContent className="bg-zinc-800 border-zinc-700">
+                  {agents.map((a) => (
+                    <SelectItem key={a.id} value={a.id}>
+                      {a.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div className="flex justify-end gap-2">
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => setOpen(false)}
-            >
+            <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
               Cancel
             </Button>
             <Button type="submit" disabled={!title.trim() || isSubmitting}>
