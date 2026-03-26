@@ -14,12 +14,14 @@ import {
 import { useState } from "react";
 import { Column } from "./column";
 import { TaskCard } from "./task-card";
+import { OutputDialog } from "@/components/agents/output-dialog";
 import { useTasks } from "@/hooks/use-tasks";
 import { COLUMNS, type Task, type TaskStatus } from "@/lib/types";
 
 export function Board() {
-  const { tasks, updateTask, deleteTask, isLoading } = useTasks();
+  const { tasks, updateTask, deleteTask, isLoading, mutate } = useTasks();
   const [activeTask, setActiveTask] = useState<Task | null>(null);
+  const [executionTaskId, setExecutionTaskId] = useState<string | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
@@ -55,6 +57,10 @@ export function Board() {
 
     if (task.status !== targetStatus) {
       await updateTask(taskId, { status: targetStatus });
+      // Trigger execution when dragging to in_progress and agent is assigned
+      if (targetStatus === "in_progress" && task.agent_id) {
+        setExecutionTaskId(taskId);
+      }
     }
   }
 
@@ -71,29 +77,47 @@ export function Board() {
   }
 
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={closestCorners}
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-      onDragOver={handleDragOver}
-    >
-      <div className="flex gap-4 h-full overflow-x-auto pb-4">
-        {COLUMNS.map((col) => (
-          <Column
-            key={col.id}
-            id={col.id}
-            label={col.label}
-            tasks={tasksByColumn(col.id)}
-            onDeleteTask={deleteTask}
-          />
-        ))}
-      </div>
-      <DragOverlay>
-        {activeTask ? (
-          <TaskCard task={activeTask} onDelete={() => {}} />
-        ) : null}
-      </DragOverlay>
-    </DndContext>
+    <>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCorners}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+        onDragOver={handleDragOver}
+      >
+        <div className="flex gap-4 h-full overflow-x-auto pb-4">
+          {COLUMNS.map((col) => (
+            <Column
+              key={col.id}
+              id={col.id}
+              label={col.label}
+              tasks={tasksByColumn(col.id)}
+              onDeleteTask={deleteTask}
+              onExecutionComplete={mutate}
+            />
+          ))}
+        </div>
+        <DragOverlay>
+          {activeTask ? (
+            <TaskCard task={activeTask} onDelete={() => {}} />
+          ) : null}
+        </DragOverlay>
+      </DndContext>
+
+      {executionTaskId && (
+        <OutputDialog
+          taskId={executionTaskId}
+          open={!!executionTaskId}
+          onOpenChange={(open) => {
+            if (!open) setExecutionTaskId(null);
+          }}
+          isRunning={true}
+          onComplete={() => {
+            setExecutionTaskId(null);
+            mutate();
+          }}
+        />
+      )}
+    </>
   );
 }
