@@ -124,22 +124,26 @@ export function Board() {
         </DragOverlay>
       </DndContext>
 
-      {executionTaskId && (
-        <OutputDialog
-          taskId={executionTaskId}
-          open={!!executionTaskId}
-          onOpenChange={(open) => {
-            if (!open) {
-              setExecutionTaskId(null);
+      {executionTaskId && (() => {
+        const executingTask = tasks.find((t) => t.id === executionTaskId);
+        return (
+          <OutputDialog
+            taskId={executionTaskId}
+            open={!!executionTaskId}
+            onOpenChange={(open) => {
+              if (!open) {
+                setExecutionTaskId(null);
+                mutate();
+              }
+            }}
+            isRunning={true}
+            executions={executingTask?.executions ?? []}
+            onComplete={() => {
               mutate();
-            }
-          }}
-          isRunning={true}
-          onComplete={() => {
-            mutate();
-          }}
-        />
-      )}
+            }}
+          />
+        );
+      })()}
     </>
   );
 }

@@ -7,7 +7,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type { TaskStatus } from "@/lib/types";
+import type { TaskExecution, TaskStatus } from "@/lib/types";
 
 interface OutputDialogProps {
   taskId: string;
@@ -17,8 +17,8 @@ interface OutputDialogProps {
   isRunning: boolean;
   /** Current task status — when "question", feedback input shows immediately */
   taskStatus?: TaskStatus;
-  /** Pre-loaded output for completed executions */
-  initialOutput?: string;
+  /** All executions for this task — used to build conversation history */
+  executions?: TaskExecution[];
   /** Called when SSE stream ends (to trigger SWR revalidation) */
   onComplete?: () => void;
 }
@@ -29,45 +29,42 @@ export function OutputDialog({
   onOpenChange,
   isRunning,
   taskStatus,
-  initialOutput = "",
+  executions = [],
   onComplete,
 }: OutputDialogProps) {
-  const [output, setOutput] = useState(initialOutput);
+  // Output of the current streaming run (clears when a new run starts)
+  const [streamingOutput, setStreamingOutput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
   const [feedback, setFeedback] = useState("");
-  // runKey > 0 triggers SSE; increments on each run
   const [runKey, setRunKey] = useState(0);
-  const outputRef = useRef<HTMLPreElement>(null);
+  const outputRef = useRef<HTMLDivElement>(null);
   const prevOpen = useRef(false);
 
-  // Initialize state when dialog transitions from closed → open
+  // Initialize when dialog transitions closed → open
   useEffect(() => {
     const justOpened = open && !prevOpen.current;
     prevOpen.current = open;
-
     if (!justOpened) return;
 
     if (isRunning) {
-      setOutput("");
+      setStreamingOutput("");
       setShowFeedback(false);
       setFeedback("");
       setRunKey((k) => k + 1);
     } else {
-      setOutput(initialOutput);
-      // If task is already in question state (e.g. user closed dialog before replying)
+      setStreamingOutput("");
       setShowFeedback(taskStatus === "question");
       setFeedback("");
       setRunKey(0);
     }
-  }, [open, isRunning, initialOutput, taskStatus]);
+  }, [open, isRunning, taskStatus]);
 
   // SSE streaming — triggered by runKey
   useEffect(() => {
     if (!open || runKey === 0) return;
 
     setStreaming(true);
-    setShowFeedback(false);
     const abortController = new AbortController();
     let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
 
@@ -98,14 +95,14 @@ export function OutputDialog({
               try {
                 const data = JSON.parse(line.slice(6));
                 if (currentEvent === "output" && data.text !== undefined) {
-                  setOutput((prev) => prev + data.text);
+                  setStreamingOutput((prev) => prev + data.text);
                 }
                 if (currentEvent === "done") {
                   setStreaming(false);
                   onComplete?.();
                 }
                 if (currentEvent === "error") {
-                  setOutput((prev) => prev + `\n[Error: ${data.message}]`);
+                  setStreamingOutput((prev) => prev + `\n[Error: ${data.message}]`);
                   setStreaming(false);
                   onComplete?.();
                 }
@@ -125,23 +122,22 @@ export function OutputDialog({
       abortController.abort();
       reader?.cancel().catch(() => {});
     };
-  }, [open, taskId, runKey]); // onComplete excluded to avoid stale closure loops
+  }, [open, taskId, runKey]);
 
   // Auto-scroll to bottom
   useEffect(() => {
     if (outputRef.current) {
       outputRef.current.scrollTop = outputRef.current.scrollHeight;
     }
-  }, [output]);
+  }, [streamingOutput, executions]);
 
   async function handleReply() {
-    // Mark task as "question" in the kanban so it's visible even if dialog is closed
     await fetch(`/api/tasks/${taskId}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: "question" }),
     });
-    onComplete?.(); // revalidate SWR so kanban updates
+    onComplete?.();
     setShowFeedback(true);
   }
 
@@ -153,16 +149,27 @@ export function OutputDialog({
       body: JSON.stringify({ pending_feedback: feedback }),
     });
     setFeedback("");
-    setOutput("");
+    setStreamingOutput("");
+    setShowFeedback(false);
     setRunKey((k) => k + 1);
   }
 
-  const hasOutput = output.length > 0;
-  const showReplyButton = !streaming && hasOutput && !showFeedback;
+  // Completed executions sorted chronologically, with actual output
+  const completedHistory = executions
+    .filter((e) => e.output.length > 0)
+    .sort((a, b) => a.started_at.localeCompare(b.started_at));
+
+  // Avoid showing streaming output if SWR already updated executions with it
+  const lastHistoryOutput = completedHistory[completedHistory.length - 1]?.output ?? "";
+  const showCurrentOutput =
+    streamingOutput.length > 0 && streamingOutput !== lastHistoryOutput;
+
+  const hasAnything = completedHistory.length > 0 || showCurrentOutput || streaming;
+  const showReplyButton = !streaming && !showFeedback && hasAnything;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="bg-zinc-900 border-zinc-700 max-w-3xl w-full flex flex-col max-h-[80vh]">
+      <DialogContent className="bg-zinc-900 border-zinc-700 max-w-5xl w-full flex flex-col max-h-[90vh]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-sm">
             Execution Output
@@ -176,12 +183,49 @@ export function OutputDialog({
             )}
           </DialogTitle>
         </DialogHeader>
-        <pre
+
+        <div
           ref={outputRef}
-          className="flex-1 overflow-auto rounded bg-zinc-950 p-4 text-xs font-mono text-zinc-300 min-h-[200px] whitespace-pre-wrap"
+          className="flex-1 overflow-auto rounded bg-zinc-950 p-4 min-h-[400px] space-y-4"
         >
-          {output || (streaming ? "Starting agent..." : "No output available")}
-        </pre>
+          {!hasAnything && !streaming && (
+            <p className="text-xs font-mono text-zinc-500">No output available</p>
+          )}
+
+          {completedHistory.map((exec, i) => (
+            <div key={exec.id} className="space-y-3">
+              {exec.feedback && (
+                <div>
+                  <div className="text-[10px] font-mono text-blue-500 mb-1 select-none">
+                    ── You ──────────────────────────────────
+                  </div>
+                  <pre className="text-xs font-mono text-blue-200 whitespace-pre-wrap">
+                    {exec.feedback}
+                  </pre>
+                </div>
+              )}
+              <div>
+                <div className="text-[10px] font-mono text-zinc-600 mb-1 select-none">
+                  ── Agent · Run {i + 1} ──────────────────────
+                </div>
+                <pre className="text-xs font-mono text-zinc-300 whitespace-pre-wrap">
+                  {exec.output}
+                </pre>
+              </div>
+            </div>
+          ))}
+
+          {(showCurrentOutput || (streaming && !showCurrentOutput)) && (
+            <div>
+              <div className="text-[10px] font-mono text-zinc-600 mb-1 select-none">
+                ── Agent · Run {completedHistory.length + 1} ──────────────────────
+              </div>
+              <pre className="text-xs font-mono text-zinc-300 whitespace-pre-wrap">
+                {streamingOutput || "Starting agent..."}
+              </pre>
+            </div>
+          )}
+        </div>
 
         {showReplyButton && (
           <div className="pt-2 border-t border-zinc-800">

@@ -120,7 +120,7 @@ export function TaskCard({ task, onDelete, onExecutionComplete }: TaskCardProps)
           onOpenChange={setShowOutput}
           isRunning={false}
           taskStatus={task.status}
-          initialOutput={lastExecution?.output ?? ""}
+          executions={task.executions}
           onComplete={onExecutionComplete}
         />
       )}

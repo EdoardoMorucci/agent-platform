@@ -105,8 +105,10 @@ export async function GET(request: NextRequest) {
       }
 
       // ── Stream via SDK ───────────────────────────────────────────────────
+      // Set AWS_PROFILE before instantiating so the credential chain picks it up
+      process.env.AWS_PROFILE = "bedrock";
+      process.env.AWS_REGION = "eu-west-1";
       const client = new AnthropicBedrock({
-        awsProfile: "bedrock",
         awsRegion: "eu-west-1",
       });
 
