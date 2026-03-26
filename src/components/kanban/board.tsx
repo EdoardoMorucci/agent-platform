@@ -9,9 +9,12 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
-  closestCorners,
+  pointerWithin,
+  rectIntersection,
+  getFirstCollision,
+  type CollisionDetection,
 } from "@dnd-kit/core";
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { Column } from "./column";
 import { TaskCard } from "./task-card";
 import { OutputDialog } from "@/components/agents/output-dialog";
@@ -26,6 +29,20 @@ export function Board() {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   );
+
+  // Collision detection: prefer columns (by pointer position), fall back to rect intersection
+  const collisionDetection: CollisionDetection = useCallback((args) => {
+    const pointerCollisions = pointerWithin(args);
+    const columnCollisions = pointerCollisions.filter((c) =>
+      COLUMNS.some((col) => col.id === c.id)
+    );
+    if (columnCollisions.length > 0) return columnCollisions;
+
+    const firstCollision = getFirstCollision(pointerCollisions);
+    if (firstCollision) return [firstCollision];
+
+    return rectIntersection(args);
+  }, []);
 
   function tasksByColumn(status: TaskStatus): Task[] {
     return tasks.filter((t) => t.status === status);
@@ -57,7 +74,6 @@ export function Board() {
 
     if (task.status !== targetStatus) {
       await updateTask(taskId, { status: targetStatus });
-      // Trigger execution when dragging to in_progress and agent is assigned
       if (targetStatus === "in_progress" && task.agent_id) {
         setExecutionTaskId(taskId);
       }
@@ -80,7 +96,7 @@ export function Board() {
     <>
       <DndContext
         sensors={sensors}
-        collisionDetection={closestCorners}
+        collisionDetection={collisionDetection}
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
         onDragOver={handleDragOver}
@@ -111,7 +127,7 @@ export function Board() {
           onOpenChange={(open) => {
             if (!open) {
               setExecutionTaskId(null);
-              mutate(); // revalidate board state even on early close
+              mutate();
             }
           }}
           isRunning={true}
