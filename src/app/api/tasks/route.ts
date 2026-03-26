@@ -25,6 +25,7 @@ export async function POST(request: NextRequest) {
     team_override: null,
     agent_id: null,
     rerun_mode: "fresh",
+    pending_feedback: null,
     executions: [],
     created_at: now,
     updated_at: now,

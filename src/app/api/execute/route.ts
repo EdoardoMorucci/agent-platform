@@ -12,6 +12,12 @@ import {
 } from "@/lib/data";
 import type { Task, Agent, TaskExecution, TaskStatus } from "@/lib/types";
 
+function detectsQuestion(output: string): boolean {
+  const lines = output.trim().split("\n").filter((l) => l.trim().length > 0);
+  if (lines.length === 0) return false;
+  return lines[lines.length - 1].trimEnd().endsWith("?");
+}
+
 export async function GET(request: NextRequest) {
   const taskId = request.nextUrl.searchParams.get("task_id");
   if (!taskId) {
@@ -21,6 +27,7 @@ export async function GET(request: NextRequest) {
   const encoder = new TextEncoder();
   let controllerClosed = false;
   let spawnedProc: ReturnType<typeof spawn> | null = null;
+  let currentExecId = "";
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -74,19 +81,21 @@ export async function GET(request: NextRequest) {
 
       // ── Create execution record ──────────────────────────────────────────
       const execId = uuidv4();
+      currentExecId = execId;
       const execution: TaskExecution = {
         id: execId,
         started_at: new Date().toISOString(),
         ended_at: null,
         status: "running",
         output: "",
-        feedback: null,
+        feedback: task.pending_feedback ?? null,
       };
 
       const taskWithExec: Task = {
         ...task,
         status: "in_progress" as TaskStatus,
         executions: [...task.executions, execution],
+        pending_feedback: null,
         updated_at: new Date().toISOString(),
       };
       await writeJsonFile(getTaskPath(taskId), taskWithExec);
@@ -97,15 +106,23 @@ export async function GET(request: NextRequest) {
       const workingDir = agent.working_dir || process.cwd();
       await fs.mkdir(workingDir, { recursive: true });
 
-      // ── Build prompt — inject CLAUDE.md content, never write it to disk ─
+      // ── Build prompt ─────────────────────────────────────────────────────
       const systemContext = claudeMd ? `${claudeMd}\n\n---\n\n` : "";
 
-      const previousOutput =
-        task.rerun_mode === "continue" && task.executions.length > 0
-          ? `\n\n## Previous execution output\n${task.executions[task.executions.length - 1].output}`
-          : "";
+      const lastExec =
+        task.executions.length > 0
+          ? task.executions[task.executions.length - 1]
+          : null;
 
-      const prompt = `${systemContext}${task.title}\n\n${task.description}${previousOutput}`;
+      let previousContext = "";
+      if (task.rerun_mode === "continue" && lastExec) {
+        previousContext = `\n\n## Previous execution output\n${lastExec.output}`;
+      }
+      if (task.pending_feedback) {
+        previousContext += `\n\n## User Response\n${task.pending_feedback}`;
+      }
+
+      const prompt = `${systemContext}${task.title}\n\n${task.description}${previousContext}`;
 
       // ── Spawn claude CLI ─────────────────────────────────────────────────
       const proc = spawnedProc = spawn(
@@ -145,8 +162,9 @@ export async function GET(request: NextRequest) {
 
         proc.on("close", (code) => {
           const execStatus = code === 0 ? "success" : "error";
+          const taskHasQuestion = code === 0 && detectsQuestion(outputBuffer);
+          const newTaskStatus: TaskStatus = taskHasQuestion ? "question" : "review";
 
-          // Persist execution result + auto-move to review
           readJsonFile<Task>(getTaskPath(taskId)).then((latestTask) => {
             if (!latestTask) return;
             const execIndex = latestTask.executions.findIndex(
@@ -161,13 +179,13 @@ export async function GET(request: NextRequest) {
             };
             const finalTask: Task = {
               ...latestTask,
-              status: "review" as TaskStatus,
+              status: newTaskStatus,
               updated_at: new Date().toISOString(),
             };
             writeJsonFile(getTaskPath(taskId), finalTask).catch(console.error);
           });
 
-          send("done", { exit_code: code, status: execStatus });
+          send("done", { exit_code: code, status: execStatus, task_status: newTaskStatus });
           resolve();
         });
       });
@@ -178,6 +196,27 @@ export async function GET(request: NextRequest) {
       // Client disconnected — stop streaming and kill the process
       controllerClosed = true;
       spawnedProc?.kill();
+      // Mark the running execution as stopped so re-runs are not blocked
+      if (currentExecId) {
+        readJsonFile<Task>(getTaskPath(taskId as string)).then((latestTask) => {
+          if (!latestTask) return;
+          const execIndex = latestTask.executions.findIndex(
+            (e) => e.id === currentExecId && e.status === "running"
+          );
+          if (execIndex === -1) return;
+          latestTask.executions[execIndex] = {
+            ...latestTask.executions[execIndex],
+            ended_at: new Date().toISOString(),
+            status: "stopped",
+          };
+          const cleanedTask: Task = {
+            ...latestTask,
+            status: "in_progress" as TaskStatus,
+            updated_at: new Date().toISOString(),
+          };
+          writeJsonFile(getTaskPath(taskId as string), cleanedTask).catch(() => {});
+        }).catch(() => {});
+      }
     },
   });
 

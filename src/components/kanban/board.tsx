@@ -45,6 +45,9 @@ export function Board() {
   }, []);
 
   function tasksByColumn(status: TaskStatus): Task[] {
+    if (status === "in_progress") {
+      return tasks.filter((t) => t.status === "in_progress" || t.status === "question");
+    }
     return tasks.filter((t) => t.status === status);
   }
 
@@ -74,7 +77,8 @@ export function Board() {
 
     if (task.status !== targetStatus) {
       await updateTask(taskId, { status: targetStatus });
-      if (targetStatus === "in_progress" && task.agent_id) {
+      // Don't auto-run when dragging a question task within the in_progress column
+      if (targetStatus === "in_progress" && task.agent_id && task.status !== "question") {
         setExecutionTaskId(taskId);
       }
     }

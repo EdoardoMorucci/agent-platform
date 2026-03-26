@@ -37,14 +37,16 @@ export function TaskCard({ task, onDelete, onExecutionComplete }: TaskCardProps)
     [...task.executions].reverse().find((e) => e.output) ??
     task.executions[task.executions.length - 1];
   const hasOutput = task.executions.some((e) => e.output);
+  const isQuestion = task.status === "question";
+  const isClickable = hasOutput || isQuestion;
 
   return (
     <>
       <Card
         ref={setNodeRef}
         style={style}
-        onClick={() => { if (hasOutput) setShowOutput(true); }}
-        className={`bg-zinc-800 border-zinc-700 p-3 group ${hasOutput ? "cursor-pointer" : "cursor-default"}`}
+        onClick={() => { if (isClickable) setShowOutput(true); }}
+        className={`bg-zinc-800 border-zinc-700 p-3 group ${isClickable ? "cursor-pointer" : "cursor-default"}`}
       >
         <div className="flex items-start gap-2">
           <button
@@ -84,14 +86,19 @@ export function TaskCard({ task, onDelete, onExecutionComplete }: TaskCardProps)
                   Review
                 </Badge>
               )}
+              {task.status === "question" && (
+                <Badge className="text-xs bg-red-500/20 text-red-400 border-red-500/30">
+                  Question
+                </Badge>
+              )}
             </div>
           </div>
           <div className="flex gap-1 shrink-0">
-            {hasOutput && (
+            {isClickable && (
               <button
                 onClick={(e) => { e.stopPropagation(); setShowOutput(true); }}
-                className="text-zinc-500 hover:text-zinc-200 transition-colors"
-                title="View output"
+                className={`transition-colors ${isQuestion ? "text-red-500 hover:text-red-300" : "text-zinc-500 hover:text-zinc-200"}`}
+                title={isQuestion ? "Respond to question" : "View output"}
               >
                 <Terminal className="h-3.5 w-3.5" />
               </button>
@@ -106,13 +113,14 @@ export function TaskCard({ task, onDelete, onExecutionComplete }: TaskCardProps)
         </div>
       </Card>
 
-      {showOutput && lastExecution && (
+      {showOutput && (
         <OutputDialog
           taskId={task.id}
           open={showOutput}
           onOpenChange={setShowOutput}
           isRunning={false}
-          initialOutput={lastExecution.output}
+          taskStatus={task.status}
+          initialOutput={lastExecution?.output ?? ""}
           onComplete={onExecutionComplete}
         />
       )}

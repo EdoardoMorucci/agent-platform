@@ -1,4 +1,4 @@
-export type TaskStatus = "backlog" | "todo" | "in_progress" | "review" | "done";
+export type TaskStatus = "backlog" | "todo" | "in_progress" | "review" | "done" | "question";
 
 export interface TaskExecution {
   id: string;
@@ -18,6 +18,7 @@ export interface Task {
   team_override: string | null;
   agent_id: string | null;
   rerun_mode: "continue" | "fresh";
+  pending_feedback: string | null;
   executions: TaskExecution[];
   created_at: string;
   updated_at: string;
@@ -37,6 +38,7 @@ export interface UpdateTaskInput {
   team_override?: string | null;
   agent_id?: string | null;
   rerun_mode?: "continue" | "fresh";
+  pending_feedback?: string | null;
 }
 
 export const COLUMNS: { id: TaskStatus; label: string }[] = [
