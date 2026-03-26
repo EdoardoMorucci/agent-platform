@@ -20,19 +20,24 @@ export async function GET(request: NextRequest) {
 
   const encoder = new TextEncoder();
   let controllerClosed = false;
+  let spawnedProc: ReturnType<typeof spawn> | null = null;
 
   const stream = new ReadableStream({
     async start(controller) {
       function send(event: string, data: object) {
         if (controllerClosed) return;
-        const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-        controller.enqueue(encoder.encode(payload));
+        try {
+          const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+          controller.enqueue(encoder.encode(payload));
+        } catch {
+          controllerClosed = true;
+        }
       }
 
       function close() {
         if (!controllerClosed) {
           controllerClosed = true;
-          controller.close();
+          try { controller.close(); } catch { /* already closed */ }
         }
       }
 
@@ -96,7 +101,7 @@ export async function GET(request: NextRequest) {
       const prompt = `${systemContext}${task.title}\n\n${task.description}${previousOutput}`;
 
       // ── Spawn claude CLI ─────────────────────────────────────────────────
-      const proc = spawn(
+      const proc = spawnedProc = spawn(
         "claude",
         ["-p", prompt, "--model", agent.model, "--output-format", "text"],
         {
@@ -161,6 +166,11 @@ export async function GET(request: NextRequest) {
       });
 
       close();
+    },
+    cancel() {
+      // Client disconnected — stop streaming and kill the process
+      controllerClosed = true;
+      spawnedProc?.kill();
     },
   });
 

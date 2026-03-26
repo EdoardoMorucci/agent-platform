@@ -93,7 +93,7 @@ export function OutputDialog({
 
     return () => {
       abortController.abort();
-      reader?.cancel();
+      reader?.cancel().catch(() => {});
     };
   }, [open, isRunning, taskId, onComplete]);
 
