@@ -12,11 +12,6 @@ import {
 } from "@/lib/data";
 import type { Task, Agent, TaskExecution, TaskStatus } from "@/lib/types";
 
-function detectsQuestion(output: string): boolean {
-  const lines = output.trim().split("\n").filter((l) => l.trim().length > 0);
-  if (lines.length === 0) return false;
-  return lines[lines.length - 1].trimEnd().endsWith("?");
-}
 
 export async function GET(request: NextRequest) {
   const taskId = request.nextUrl.searchParams.get("task_id");
@@ -162,8 +157,7 @@ export async function GET(request: NextRequest) {
 
         proc.on("close", (code) => {
           const execStatus = code === 0 ? "success" : "error";
-          const taskHasQuestion = code === 0 && detectsQuestion(outputBuffer);
-          const newTaskStatus: TaskStatus = taskHasQuestion ? "question" : "review";
+          const newTaskStatus: TaskStatus = "review";
 
           readJsonFile<Task>(getTaskPath(taskId)).then((latestTask) => {
             if (!latestTask) return;

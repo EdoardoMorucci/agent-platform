@@ -15,11 +15,11 @@ interface OutputDialogProps {
   onOpenChange: (open: boolean) => void;
   /** When true, connects to SSE stream immediately on open */
   isRunning: boolean;
-  /** Current task status — used to show feedback input when "question" */
+  /** Current task status — when "question", feedback input shows immediately */
   taskStatus?: TaskStatus;
   /** Pre-loaded output for completed executions */
   initialOutput?: string;
-  /** Called when SSE stream ends without a question (to trigger SWR revalidation) */
+  /** Called when SSE stream ends (to trigger SWR revalidation) */
   onComplete?: () => void;
 }
 
@@ -34,9 +34,9 @@ export function OutputDialog({
 }: OutputDialogProps) {
   const [output, setOutput] = useState(initialOutput);
   const [streaming, setStreaming] = useState(false);
-  const [isQuestion, setIsQuestion] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
   const [feedback, setFeedback] = useState("");
-  // runKey > 0 triggers SSE; increments on each run (initial + re-runs via feedback)
+  // runKey > 0 triggers SSE; increments on each run
   const [runKey, setRunKey] = useState(0);
   const outputRef = useRef<HTMLPreElement>(null);
   const prevOpen = useRef(false);
@@ -50,12 +50,13 @@ export function OutputDialog({
 
     if (isRunning) {
       setOutput("");
-      setIsQuestion(false);
+      setShowFeedback(false);
       setFeedback("");
       setRunKey((k) => k + 1);
     } else {
       setOutput(initialOutput);
-      setIsQuestion(taskStatus === "question");
+      // If task is already in question state (e.g. user closed dialog before replying)
+      setShowFeedback(taskStatus === "question");
       setFeedback("");
       setRunKey(0);
     }
@@ -66,6 +67,7 @@ export function OutputDialog({
     if (!open || runKey === 0) return;
 
     setStreaming(true);
+    setShowFeedback(false);
     const abortController = new AbortController();
     let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
 
@@ -100,11 +102,7 @@ export function OutputDialog({
                 }
                 if (currentEvent === "done") {
                   setStreaming(false);
-                  if (data.task_status === "question") {
-                    setIsQuestion(true);
-                  } else {
-                    onComplete?.();
-                  }
+                  onComplete?.();
                 }
                 if (currentEvent === "error") {
                   setOutput((prev) => prev + `\n[Error: ${data.message}]`);
@@ -136,6 +134,17 @@ export function OutputDialog({
     }
   }, [output]);
 
+  async function handleReply() {
+    // Mark task as "question" in the kanban so it's visible even if dialog is closed
+    await fetch(`/api/tasks/${taskId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "question" }),
+    });
+    onComplete?.(); // revalidate SWR so kanban updates
+    setShowFeedback(true);
+  }
+
   async function handleSubmitFeedback() {
     if (!feedback.trim()) return;
     await fetch(`/api/tasks/${taskId}`, {
@@ -145,9 +154,11 @@ export function OutputDialog({
     });
     setFeedback("");
     setOutput("");
-    setIsQuestion(false);
     setRunKey((k) => k + 1);
   }
+
+  const hasOutput = output.length > 0;
+  const showReplyButton = !streaming && hasOutput && !showFeedback;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -158,7 +169,7 @@ export function OutputDialog({
             {streaming && (
               <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
             )}
-            {isQuestion && !streaming && (
+            {showFeedback && !streaming && (
               <span className="text-xs font-normal text-red-400">
                 — Waiting for your response
               </span>
@@ -171,7 +182,19 @@ export function OutputDialog({
         >
           {output || (streaming ? "Starting agent..." : "No output available")}
         </pre>
-        {isQuestion && !streaming && (
+
+        {showReplyButton && (
+          <div className="pt-2 border-t border-zinc-800">
+            <button
+              onClick={handleReply}
+              className="px-3 py-1.5 rounded bg-zinc-700 hover:bg-zinc-600 text-xs text-zinc-300 transition-colors"
+            >
+              Reply
+            </button>
+          </div>
+        )}
+
+        {showFeedback && !streaming && (
           <div className="flex gap-2 pt-2 border-t border-zinc-800">
             <textarea
               value={feedback}
@@ -179,6 +202,7 @@ export function OutputDialog({
               placeholder="Type your response... (Ctrl+Enter to submit)"
               className="flex-1 rounded bg-zinc-800 border border-zinc-700 p-2 text-sm text-zinc-200 placeholder:text-zinc-500 resize-none focus:outline-none focus:ring-1 focus:ring-zinc-500"
               rows={3}
+              autoFocus
               onKeyDown={(e) => {
                 if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                   handleSubmitFeedback();
