@@ -16,6 +16,7 @@ export interface Task {
   type: string;
   status: TaskStatus;
   team_override: string | null;
+  agent_id: string | null;
   rerun_mode: "continue" | "fresh";
   executions: TaskExecution[];
   created_at: string;
@@ -34,6 +35,7 @@ export interface UpdateTaskInput {
   type?: string;
   status?: TaskStatus;
   team_override?: string | null;
+  agent_id?: string | null;
   rerun_mode?: "continue" | "fresh";
 }
 
@@ -43,4 +45,41 @@ export const COLUMNS: { id: TaskStatus; label: string }[] = [
   { id: "in_progress", label: "In Progress" },
   { id: "review", label: "Review" },
   { id: "done", label: "Done" },
+];
+
+// ── Agents ──────────────────────────────────────────────────────────────────
+
+export type AgentModel =
+  | "eu.anthropic.claude-opus-4-6-v1"
+  | "eu.anthropic.claude-sonnet-4-6";
+
+export interface Agent {
+  id: string;
+  name: string;
+  description: string;
+  model: AgentModel;
+  working_dir: string;
+  skills: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateAgentInput {
+  name: string;
+  description: string;
+  model: AgentModel;
+  working_dir: string;
+}
+
+export interface UpdateAgentInput {
+  name?: string;
+  description?: string;
+  model?: AgentModel;
+  working_dir?: string;
+  skills?: string[];
+}
+
+export const AGENT_MODELS: { id: AgentModel; label: string }[] = [
+  { id: "eu.anthropic.claude-opus-4-6-v1", label: "Claude Opus 4.6" },
+  { id: "eu.anthropic.claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
 ];

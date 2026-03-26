@@ -23,6 +23,7 @@ export async function POST(request: NextRequest) {
     type: body.type || "general",
     status: "backlog",
     team_override: null,
+    agent_id: null,
     rerun_mode: "fresh",
     executions: [],
     created_at: now,
