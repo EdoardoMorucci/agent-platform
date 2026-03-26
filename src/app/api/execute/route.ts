@@ -55,6 +55,13 @@ export async function GET(request: NextRequest) {
         return;
       }
 
+      // Guard against double-invoke (React StrictMode dev or duplicate requests)
+      if (task.executions.some((e) => e.status === "running")) {
+        send("error", { message: "Task is already running" });
+        close();
+        return;
+      }
+
       // ── Load agent ───────────────────────────────────────────────────────
       const agent = await readJsonFile<Agent>(getAgentConfigPath(task.agent_id));
       if (!agent) {

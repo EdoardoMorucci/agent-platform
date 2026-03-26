@@ -33,8 +33,10 @@ export function TaskCard({ task, onDelete, onExecutionComplete }: TaskCardProps)
     opacity: isDragging ? 0.5 : 1,
   };
 
-  const lastExecution = task.executions[task.executions.length - 1];
-  const hasOutput = task.executions.length > 0;
+  const lastExecution =
+    [...task.executions].reverse().find((e) => e.output) ??
+    task.executions[task.executions.length - 1];
+  const hasOutput = task.executions.some((e) => e.output);
 
   return (
     <>
