@@ -109,7 +109,10 @@ export function Board() {
           taskId={executionTaskId}
           open={!!executionTaskId}
           onOpenChange={(open) => {
-            if (!open) setExecutionTaskId(null);
+            if (!open) {
+              setExecutionTaskId(null);
+              mutate(); // revalidate board state even on early close
+            }
           }}
           isRunning={true}
           onComplete={() => {

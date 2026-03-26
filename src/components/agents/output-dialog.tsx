@@ -38,20 +38,23 @@ export function OutputDialog({
 
     setOutput("");
     setStreaming(true);
-    let aborted = false;
+    const abortController = new AbortController();
+    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
 
     (async () => {
       try {
-        const response = await fetch(`/api/execute?task_id=${taskId}`);
+        const response = await fetch(`/api/execute?task_id=${taskId}`, {
+          signal: abortController.signal,
+        });
         if (!response.body) return;
 
-        const reader = response.body.getReader();
+        reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
 
         while (true) {
           const { done, value } = await reader.read();
-          if (done || aborted) break;
+          if (done) break;
 
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split("\n");
@@ -89,9 +92,10 @@ export function OutputDialog({
     })();
 
     return () => {
-      aborted = true;
+      abortController.abort();
+      reader?.cancel();
     };
-  }, [open, isRunning, taskId]);
+  }, [open, isRunning, taskId, onComplete]);
 
   // Reset output when switching to non-running mode
   useEffect(() => {

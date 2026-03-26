@@ -33,7 +33,7 @@ const TASK_TYPES = [
 ];
 
 export function CreateTaskDialog() {
-  const { createTask } = useTasks();
+  const { createTask, mutate } = useTasks();
   const { agents } = useAgents();
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
@@ -55,6 +55,7 @@ export function CreateTaskDialog() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ agent_id: agentId }),
       });
+      await mutate();
     }
     setTitle("");
     setDescription("");
