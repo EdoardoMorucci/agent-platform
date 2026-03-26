@@ -41,7 +41,8 @@ export function TaskCard({ task, onDelete, onExecutionComplete }: TaskCardProps)
       <Card
         ref={setNodeRef}
         style={style}
-        className="bg-zinc-800 border-zinc-700 p-3 cursor-default group"
+        onClick={() => { if (hasOutput) setShowOutput(true); }}
+        className={`bg-zinc-800 border-zinc-700 p-3 group ${hasOutput ? "cursor-pointer" : "cursor-default"}`}
       >
         <div className="flex items-start gap-2">
           <button
@@ -86,8 +87,8 @@ export function TaskCard({ task, onDelete, onExecutionComplete }: TaskCardProps)
           <div className="flex gap-1 shrink-0">
             {hasOutput && (
               <button
-                onClick={() => setShowOutput(true)}
-                className="opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-zinc-300 transition-opacity"
+                onClick={(e) => { e.stopPropagation(); setShowOutput(true); }}
+                className="text-zinc-500 hover:text-zinc-200 transition-colors"
                 title="View output"
               >
                 <Terminal className="h-3.5 w-3.5" />

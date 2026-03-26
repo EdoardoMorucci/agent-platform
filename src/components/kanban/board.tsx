@@ -116,7 +116,6 @@ export function Board() {
           }}
           isRunning={true}
           onComplete={() => {
-            setExecutionTaskId(null);
             mutate();
           }}
         />
