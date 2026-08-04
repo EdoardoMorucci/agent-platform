@@ -30,8 +30,22 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env*
+# env files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+!.env.example
+
+# local runtime data (agents, tasks, teams)
+/data/tasks/*.json
+/data/agents/*/
+/data/teams/*.json
+/workspace/
+
+# editor / tooling
+.claude/
 
 # vercel
 .vercel
